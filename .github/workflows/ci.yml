@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
     branches: ["**"]
 
@@ -15,9 +15,20 @@ jobs:
       - name: Install Conan
         id: conan
         uses: turtlebrowser/get-conan@main
+        with:
+          version: 2.3.2
 
-      - name: Create default Conan profile
-        run: conan profile detect
+      - name: Fetch up-transport-zenoh-cpp
+        uses: actions/checkout@v4
+        with:
+          path: up-transport-zenoh-cpp
+
+      - name: Install conan CI profile
+        shell: bash
+        run: |
+          conan profile detect
+          cp up-transport-zenoh-cpp/.github/workflows/ci_conan_profile "$(conan profile path default)"
+          conan profile show
 
       - name: Fetch up-core-api conan recipe
         uses: actions/checkout@v4
@@ -40,11 +51,6 @@ jobs:
         run: |
           conan create --version 1.0.0-rc5 up-conan-recipes/zenohc-tmp/prebuilt
           conan create --version 1.0.0-rc5 up-conan-recipes/zenohcpp-tmp/from-source
-
-      - name: Fetch up-transport-zenoh-cpp
-        uses: actions/checkout@v4
-        with:
-          path: up-transport-zenoh-cpp
 
       - name: Build up-transport-zenoh-cpp with tests
         shell: bash
@@ -104,7 +110,7 @@ jobs:
         if: success() || failure()
         with:
           name: test-results
-          path: 'up-transport-zenoh-cpp/build/Release/test/results/*.xml'
+          path: "up-transport-zenoh-cpp/build/Release/test/results/*.xml"
 
   lint:
     name: Lint C++ sources
@@ -146,9 +152,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           repo-root: up-transport-zenoh-cpp
-          ignore: 'test'
-          style: 'file' # read .clang-format for configuration
-          tidy-checks: '' # Read .clang-tidy for configuration
+          ignore: "test"
+          style: "file" # read .clang-format for configuration
+          tidy-checks: "" # Read .clang-tidy for configuration
           database: compile_commands.json
 
       - name: Run linters on tests
@@ -158,13 +164,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           repo-root: up-transport-zenoh-cpp
-          ignore: 'src|include'
-          style: 'file' # read .clang-format for configuration
-          tidy-checks: '' # Read .clang-tidy for configuration
+          ignore: "src|include"
+          style: "file" # read .clang-format for configuration
+          tidy-checks: "" # Read .clang-tidy for configuration
           database: compile_commands.json
 
       - name: Report lint failure
-        if: steps.source-linter.outputs.checks-failed > 0 || steps.test-linter.outputs.checks-failed > 0
+        if:
+          steps.source-linter.outputs.checks-failed > 0 ||
+          steps.test-linter.outputs.checks-failed > 0
         run: |
           exit 1
 
