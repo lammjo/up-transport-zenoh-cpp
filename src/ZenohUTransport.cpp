@@ -11,6 +11,7 @@
 
 #include "up-transport-zenoh-cpp/ZenohUTransport.h"
 
+#include <base64.h>
 #include <spdlog/spdlog.h>
 #include <up-cpp/datamodel/serializer/UUri.h>
 #include <up-cpp/datamodel/serializer/Uuid.h>
@@ -92,17 +93,17 @@ ZenohUTransport::uattributesToAttachment(const v1::UAttributes& attributes) {
 
 	std::string data;
 	attributes.SerializeToString(&data);
+	std::string data_b64 = base64::to_base64(data);
 
 	res.emplace_back("", version);
-	res.emplace_back("", data);
+	res.emplace_back("", data_b64);
 	return res;
 }
 
 v1::UAttributes ZenohUTransport::attachmentToUAttributes(
     const zenoh::Bytes& attachment) {
-	auto attachment_vec =
-	    attachment
-	        .deserialize<std::vector<std::pair<std::string, std::string>>>();
+	auto attachment_vec = zenoh::ext::deserialize<
+	    std::vector<std::pair<std::string, std::string>>>(attachment);
 
 	if (attachment_vec.size() != 2) {
 		spdlog::error("attachmentToUAttributes: attachment size != 2");
@@ -116,7 +117,7 @@ v1::UAttributes ZenohUTransport::attachmentToUAttributes(
 		}
 	};
 	v1::UAttributes res;
-	res.ParseFromString(attachment_vec[1].second);
+	res.ParseFromString(base64::from_base64(attachment_vec[1].second));
 	return res;
 }
 
@@ -156,9 +157,16 @@ zenoh::Priority ZenohUTransport::mapZenohPriority(v1::UPriority upriority) {
 
 v1::UMessage ZenohUTransport::sampleToUMessage(const zenoh::Sample& sample) {
 	v1::UMessage message;
-	*message.mutable_attributes() =
-	    attachmentToUAttributes(sample.get_attachment());
-	std::string payload(sample.get_payload().deserialize<std::string>());
+	const auto attachment = sample.get_attachment();
+	if (attachment.has_value()) {
+		*message.mutable_attributes() =
+		    attachmentToUAttributes(attachment.value());
+	} else {
+		spdlog::error("sampleToUMessage: empty attachment");
+		// TODO: error report? attachments are optional, attributes are not
+	}
+	std::string payload(
+	    zenoh::ext::deserialize<std::string>(sample.get_payload()));
 	message.set_payload(payload);
 
 	return message;
@@ -166,10 +174,19 @@ v1::UMessage ZenohUTransport::sampleToUMessage(const zenoh::Sample& sample) {
 
 v1::UMessage ZenohUTransport::queryToUMessage(const zenoh::Query& query) {
 	v1::UMessage message;
-	*message.mutable_attributes() =
-	    attachmentToUAttributes(query.get_attachment());
-	std::string payload(query.get_payload().deserialize<std::string>());
-	message.set_payload(payload);
+	const auto attachment = query.get_attachment();
+	if (attachment.has_value()) {
+		*message.mutable_attributes() =
+		    attachmentToUAttributes(attachment.value());
+	} else {
+		spdlog::error("sampleToUMessage: empty attachment");
+		// TODO: report error? attachments are optional, attributes are not
+	}
+	if (query.get_payload().has_value()) {
+		std::string payload(zenoh::ext::deserialize<std::string>(
+		    query.get_payload().value().get()));
+		message.set_payload(payload);
+	}
 
 	return message;
 }
@@ -218,9 +235,9 @@ v1::UStatus ZenohUTransport::sendPublishNotification_(
 		zenoh::Session::PutOptions options;
 		options.priority = priority;
 		options.encoding = zenoh::Encoding("app/custom");
-		options.attachment = attachment;
-		session_.put(zenoh::KeyExpr(zenoh_key),
-		             zenoh::Bytes::serialize(payload), std::move(options));
+		options.attachment = zenoh::ext::serialize(attachment);
+		session_.put(zenoh::KeyExpr(zenoh_key), zenoh::ext::serialize(payload),
+		             std::move(options));
 	} catch (const zenoh::ZException& e) {
 		return uError(v1::UCode::INTERNAL, e.what());
 	}
